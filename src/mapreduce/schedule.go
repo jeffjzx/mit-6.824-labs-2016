@@ -1,6 +1,8 @@
 package mapreduce
 
-import "fmt"
+import (
+	"fmt"
+	)
 
 // schedule starts and waits for all tasks in the given phase (Map or Reduce).
 func (mr *Master) schedule(phase jobPhase) {
@@ -16,6 +18,20 @@ func (mr *Master) schedule(phase jobPhase) {
 	}
 
 	fmt.Printf("Schedule: %v %v tasks (%d I/Os)\n", ntasks, phase, nios)
+
+	workerName := <-mr.registerChannel
+	args := new(DoTaskArgs)
+	args.Phase = phase
+	args.NumOtherPhase = nios
+	args.JobName = mr.jobName
+
+
+	for i := 0; i < ntasks; i++ {
+		args.File = mr.files[i]
+		args.TaskNumber = i
+		call(workerName, "Worker.DoTask", args, new(struct{}))
+	}
+	
 
 	// All ntasks tasks have to be scheduled on workers, and only once all of
 	// them have been completed successfully should the function return.

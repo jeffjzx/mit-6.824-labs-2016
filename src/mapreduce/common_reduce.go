@@ -45,7 +45,7 @@ func doReduce(
 		fileName := reduceName(jobName, i, reduceTaskNumber)
 		file, err := os.Open(fileName)
 		if err != nil {
-			log.Fatal("doReduce: ", err)
+			log.Fatal("doReduce1: ", err)
 		}
 
 		dec := json.NewDecoder(file)
@@ -78,7 +78,7 @@ func doReduce(
 
 	file, err := os.Create(p)
 	if err != nil {
-		log.Fatal("doReduce: ceate ", err)
+		log.Fatal("doReduce2: ceate ", err)
 	}
 
 	enc := json.NewEncoder(file)

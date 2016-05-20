@@ -45,17 +45,17 @@ func doMap(
 	// Remember to close the file after you have written all the values!
 	file, err := os.Open(inFile)
 	if err != nil {
-		log.Fatal("doMap: ", err)
+		log.Fatal("doMap1: ", err)
 	}
 	fi, err := file.Stat()
 	if err != nil {
-		log.Fatal("doMap: ", err)
+		log.Fatal("doMap2: ", err)
 	}
 	size := fi.Size()
 	b := make([]byte, size)
 	_, err = file.Read(b)
 	if err != nil {
-		log.Fatal("doMap: ", err)
+		log.Fatal("doMap3: ", err)
 	}
 	file.Close()
 	mapKV := mapF(inFile, string(b))  // throw file content into mapF and get KV list
