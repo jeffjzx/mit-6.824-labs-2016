@@ -29,7 +29,21 @@ func (mr *Master) schedule(phase jobPhase) {
 	for i := 0; i < ntasks; i++ {
 		args.File = mr.files[i]
 		args.TaskNumber = i
-		call(workerName, "Worker.DoTask", args, new(struct{}))
+		ok := call(workerName, "Worker.DoTask", args, new(struct{}))
+
+		for !ok {
+			outerBreak := false
+			for j := 0; j < len(mr.workers); j++ {
+				ok = call(mr.workers[j], "Worker.DoTask", args, new(struct{}))
+				if ok {
+					outerBreak = true
+					break
+				}
+			}
+			if outerBreak {
+				break
+			}
+		}
 	}
 	
 
