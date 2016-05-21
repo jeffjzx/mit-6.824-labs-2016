@@ -37,6 +37,12 @@ type ApplyMsg struct {
 	Snapshot    []byte // ignore for lab2; only used in lab3
 }
 
+// Used as heartbeat
+
+type AppendEntries struct {
+
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -49,17 +55,35 @@ type Raft struct {
 	// Your data here.
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
+	currentTerm int
+	votedFor int
+	log []*Log
 
+	commitIndex int
+	lastApplied int
+
+	nextIndex  []int
+	matchIndex []int
+
+}
+
+type Log struct {
+	Command interface{}
+	Term int
 }
 
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
-	var term int
 	var isleader bool
 	// Your code here.
-	return term, isleader
+	if rf.votedFor == rf.me {
+		isleader = true
+	} else {
+		isleader = false
+	}
+	return rf.currentTerm, isleader
 }
 
 //
@@ -98,6 +122,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here.
+	Term int
+	CandidateID int
+	LastLogIndex int
+	LastLogTerm int
 }
 
 //
@@ -105,6 +133,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here.
+	Term int
+	VoteGranted bool
 }
 
 //
