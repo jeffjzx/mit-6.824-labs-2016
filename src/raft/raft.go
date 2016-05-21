@@ -122,10 +122,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here.
-	Term int
-	CandidateID int
-	LastLogIndex int
-	LastLogTerm int
+	TERM int
+	CANDIDATEID int
+	LASTLOGIDX int
+	LASTLOGTERM int
 }
 
 //
@@ -133,8 +133,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here.
-	Term int
-	VoteGranted bool
+	TERM int
+	VOTEGRANTED bool
 }
 
 //
@@ -142,6 +142,12 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here.
+	if rf.currentTerm >= reply.TERM {
+		reply.TERM = rf.currentTerm
+		reply.VOTEGRANTED = true
+	} else {
+		reply.VOTEGRANTED = false
+	}
 }
 
 //
@@ -163,6 +169,9 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 //
 func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	println("here in sendRequestVote~~~~~~~~~~~")
+	println(ok)
+	println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
 	return ok
 }
 
@@ -218,6 +227,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here.
+	// just for test
+	rf.currentTerm = 2
+	var args RequestVoteArgs
+	var reply RequestVoteReply
+	println("begin")
+	rf.sendRequestVote(1, args, &reply)
+	println(reply.VOTEGRANTED)
+	println("end")
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
