@@ -21,7 +21,7 @@ import "sync"
 import "labrpc"
 import "time"
 import "math/rand"
-import "strconv"
+// import "strconv"
 
 // import "bytes"
 // import "encoding/gob"
@@ -142,6 +142,7 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here.
+
 	if rf.currentTerm == args.TERM {
 
 		if rf.votedFor != -1 && rf.votedFor != args.CANDIDATEID { // allow at most one winner per term
@@ -153,6 +154,9 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 			rf.mu.Lock()
 			rf.votedFor = args.CANDIDATEID
 			rf.currentTerm = args.TERM
+			if rf.state == "candidate" {
+				rf.state = "follower"
+			}
 			rf.mu.Unlock()
 			reply.VOTEGRANTED = true
 			return
@@ -167,6 +171,9 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		rf.mu.Lock()
 		rf.votedFor = args.CANDIDATEID
 		rf.currentTerm = args.TERM
+		if rf.state == "candidate" {
+			rf.state = "follower"
+		}
 		rf.mu.Unlock()
 		return
 	}
@@ -208,7 +215,7 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 			}
 			break
 		}
-		time.Sleep(10 * time.Millisecond) // try to be gentle
+		time.Sleep(5 * time.Millisecond) // try to be gentle
 		ok = rf.peers[server].Call("Raft.RequestVote", args, reply)
 	}
 	return ok
@@ -226,18 +233,19 @@ func (rf *Raft) BroadcastRequestVote() {
 	// args.LASTLOGTERM = rf.log[len(rf.log)-1].Term
 	reply.TERM = rf.currentTerm
 
+	gochan := make(chan int, len(rf.peers)-1)
+
 	// send to all other nodes in parallel
-	go func() {
-		for k := 0; k < len(rf.peers); k++ {
-			if k != rf.me { // exclude self
-				rf.sendRequestVote(k, *args, reply)
-				if reply.TERM > rf.currentTerm {
-					rf.state = "follower" // if candidate find its term out of date, revert to "follower" state
-					break
-				}
-			}
+	for k := 0; k < len(rf.peers); k++ {
+		if k != rf.me { // exclude self
+			gochan <- k
+			go func() {
+				temp := <- gochan
+				rf.sendRequestVote(temp, *args, reply)
+			}()
+
 		}
-	}()
+	}
 }
 
 // used by leader of the cluster
@@ -263,9 +271,16 @@ func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) 
 	}
 	// if the current rf is in "candidate" state, step down to "follower"
 	if rf.state == "candidate" { 
-		println("hear from leader")
 		rf.state = "follower"
 	}
+
+	// step down if a leader hear from a new leader
+
+	if rf.state == "leader" && rf.currentTerm < args.TERM {
+		rf.state = "follower"
+	}
+
+
 	// hear from heartbeat
 
 	rf.heartbeatCH <- true
@@ -292,6 +307,11 @@ func (rf *Raft) sendAppendEntriesRPC(server int, args AppendEntries, reply *Appe
 		time.Sleep(20 * time.Millisecond) // try to be gentle
 		ok = rf.peers[server].Call("Raft.AppendEntriesRPC", args, reply)
 	}
+
+	// if candidate find its term out of date, revert to "follower" state
+	if reply.TERM > rf.currentTerm {
+		rf.state = "follower"  
+	}
 	return ok
 }
 
@@ -301,9 +321,8 @@ func (rf *Raft) BroadcastAppendEntriesRPC() {
 	reply := &AppendEntriesReply{}
 	args.TERM = rf.currentTerm
 	args.LEADERID = rf.me
-	k := 0
 	gochan := make(chan int, len(rf.peers)-1)
-	for k = 0; k < len(rf.peers); k++ {
+	for k := 0; k < len(rf.peers); k++ {
 		if k != rf.me {
 			gochan <- k
 			go func() {
@@ -359,17 +378,11 @@ func (rf *Raft) Loop() {
 			// DO FOLLOWER STUFF
 
 			select {
-				
-			// case <-timer.C:
-				// start a new election, set state to "candidate"
-				// rf.state = "candidate"
-				// println("Leader timeout, rf.me: " + strconv.Itoa(rf.me) + "  TimeOutConst: " + strconv.Itoa(TimeOutConst))
+
 			case <-rf.heartbeatCH:
-				// println("Receive heartbeat")
 
 			case <- time.After(time.Duration(TimeOutConst) * time.Millisecond):
 				rf.state = "candidate"
-				println("Leader timeout, rf.me: " + strconv.Itoa(rf.me))
 			}
 		} else if rf.state == "candidate" {
 			// DO CANDIDIATE STUFF
@@ -420,7 +433,6 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 		}
 
 	case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
-		println("No-one win election, back to main Loop() and start all over again as candidate. rf.me: " + strconv.Itoa(rf.me))
 		return
 	}
 
@@ -428,8 +440,7 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 
 func (rf *Raft) LeaderState() {
 	// broadcast heatbeat to all other nodes in the cluster
-	// println(strconv.Itoa(rf.me) + " in leader state")
-	time.Sleep(20*time.Millisecond)
+	time.Sleep(5*time.Millisecond)
 	rf.BroadcastAppendEntriesRPC()
 }
 
