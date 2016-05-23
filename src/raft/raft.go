@@ -143,38 +143,21 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here.
 
-	if rf.currentTerm == args.TERM {
-
-		if rf.votedFor != -1 && rf.votedFor != args.CANDIDATEID { // allow at most one winner per term
-			reply.VOTEGRANTED = false 
-			return
-		} 
-
-		if rf.votedFor == -1 {    // has not voted yet
-			rf.mu.Lock()
-			rf.votedFor = args.CANDIDATEID
-			rf.currentTerm = args.TERM
-			if rf.state == "candidate" {
-				rf.state = "follower"
-			}
-			rf.mu.Unlock()
-			reply.VOTEGRANTED = true
-			return
-		}
-	} else if rf.currentTerm > args.TERM {  // candidate's term is out of date
-		reply.VOTEGRANTED = false
-		reply.TERM = rf.currentTerm
-		return
-	} else {
-		// default case: candidate's term is newer than this guy
-		reply.VOTEGRANTED = true
+	// Vote granted in following cases:
+	// 1. candidate's term is more up-to-date
+	// 2. candidate's term is equal to voter's term "AND" one of the following condition:
+	// 		* voter has not voted yet
+	// 		* voter has voted candidate at least once. (since each voter can only vote for one guy in each term)
+	if rf.currentTerm < args.TERM || (rf.currentTerm == args.TERM && (rf.votedFor == -1 || rf.votedFor == args.CANDIDATEID)) {
 		rf.mu.Lock()
 		rf.votedFor = args.CANDIDATEID
 		rf.currentTerm = args.TERM
-		if rf.state == "candidate" {
-			rf.state = "follower"
-		}
+		rf.state = "follower"
 		rf.mu.Unlock()
+		reply.VOTEGRANTED = true
+		return
+	} else {
+		reply.VOTEGRANTED = false
 		return
 	}
 }
@@ -269,13 +252,12 @@ func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) 
 		reply.ACCEPT = false
 		return
 	}
-	// if the current rf is in "candidate" state, step down to "follower"
+	// if the current listener is in "candidate" state, if so, step down to "follower"
 	if rf.state == "candidate" { 
 		rf.state = "follower"
 	}
 
 	// step down if a leader hear from a new leader
-
 	if rf.state == "leader" && rf.currentTerm < args.TERM {
 		rf.state = "follower"
 	}
@@ -284,7 +266,6 @@ func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) 
 	// hear from heartbeat
 
 	rf.heartbeatCH <- true
-
 	rf.currentTerm = args.TERM
 	reply.ACCEPT = true
 	return
@@ -422,7 +403,6 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 
 	// send RequestVote to all other nodes, and wait for BecomeLeaderCH
 	rf.BroadcastRequestVote()
-	// TODO in AppendEntries handler add a channel to detect voice from a valid leader
 	
 	select {
 	case becomeLeader := <- rf.BecomeLeaderCH:
