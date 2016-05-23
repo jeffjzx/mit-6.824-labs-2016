@@ -21,6 +21,7 @@ import "sync"
 import "labrpc"
 import "time"
 import "math/rand"
+
 // import "strconv"
 
 // import "bytes"
@@ -64,8 +65,8 @@ type Raft struct {
 
 	heartbeatCH chan bool
 
-	BecomeLeaderCH   chan bool // used in candidiate state
-	voteCount        int       // used in candidate state, reset everytime when became a candidate
+	BecomeLeaderCH chan bool // used in candidiate state
+	voteCount      int       // used in candidate state, reset everytime when became a candidate
 
 }
 
@@ -198,7 +199,7 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 			}
 			break
 		}
-		time.Sleep(8 * time.Millisecond) // try to be gentle
+		time.Sleep(20 * time.Millisecond) // try to be gentle
 		ok = rf.peers[server].Call("Raft.RequestVote", args, reply)
 	}
 	return ok
@@ -223,10 +224,9 @@ func (rf *Raft) BroadcastRequestVote() {
 		if k != rf.me { // exclude self
 			gochan <- k
 			go func() {
-				temp := <- gochan
+				temp := <-gochan
 				rf.sendRequestVote(temp, *args, reply)
 			}()
-
 		}
 	}
 }
@@ -234,12 +234,12 @@ func (rf *Raft) BroadcastRequestVote() {
 // used by leader of the cluster
 
 type AppendEntries struct {
-	TERM int
+	TERM     int
 	LEADERID int
 }
 
 type AppendEntriesReply struct {
-	TERM int
+	TERM   int
 	ACCEPT bool
 }
 
@@ -253,16 +253,13 @@ func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) 
 		return
 	}
 	// if the current listener is in "candidate" state, if so, step down to "follower"
-	if rf.state == "candidate" { 
+	if rf.state == "candidate" {
 		rf.state = "follower"
 	}
-
 	// step down if a leader hear from a new leader
 	if rf.state == "leader" && rf.currentTerm < args.TERM {
 		rf.state = "follower"
 	}
-
-
 	// hear from heartbeat
 
 	rf.heartbeatCH <- true
@@ -277,21 +274,20 @@ func (rf *Raft) sendAppendEntriesRPC(server int, args AppendEntries, reply *Appe
 	// if not, check if leader's term is up-to-date, if not, step down to follower
 	ok := rf.peers[server].Call("Raft.AppendEntriesRPC", args, reply)
 	for {
-		
 		if ok {
-			if !reply.ACCEPT && rf.currentTerm < reply.TERM{
+			if !reply.ACCEPT && rf.currentTerm < reply.TERM {
 				rf.state = "follower"
 				rf.BecomeLeaderCH <- false
 				break
 			}
 		}
-		time.Sleep(8 * time.Millisecond) // try to be gentle
+		time.Sleep(20 * time.Millisecond) // try to be gentle
 		ok = rf.peers[server].Call("Raft.AppendEntriesRPC", args, reply)
 	}
 
 	// if candidate find its term out of date, revert to "follower" state
 	if reply.TERM > rf.currentTerm {
-		rf.state = "follower"  
+		rf.state = "follower"
 	}
 	return ok
 }
@@ -356,7 +352,7 @@ func (rf *Raft) Loop() {
 			// DO FOLLOWER STUFF
 			select {
 			case <-rf.heartbeatCH:
-			case <- time.After(time.Duration(TimeOutConst) * time.Millisecond):
+			case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
 				rf.state = "candidate"
 			}
 		} else if rf.state == "candidate" {
@@ -367,7 +363,6 @@ func (rf *Raft) Loop() {
 			// * send heartbeats
 			rf.LeaderState()
 		}
-
 	}
 }
 
@@ -385,7 +380,6 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 	default:
 		// println("BecomeLeaderCH is empty, carry on.")
 	}
-
 	// send RequestVoteRPC to all other servers, retry until:
 	// 1. Receive votes from majority of servers
 	// 		* Become leader
@@ -397,9 +391,9 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 
 	// send RequestVote to all other nodes, and wait for BecomeLeaderCH
 	rf.BroadcastRequestVote()
-	
+
 	select {
-	case becomeLeader := <- rf.BecomeLeaderCH:
+	case becomeLeader := <-rf.BecomeLeaderCH:
 		// change state to leader
 		if becomeLeader {
 			rf.state = "leader"
@@ -408,12 +402,11 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 	case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
 		return
 	}
-
 }
 
 func (rf *Raft) LeaderState() {
 	// broadcast heatbeat to all other nodes in the cluster
-	time.Sleep(8*time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 	rf.BroadcastAppendEntriesRPC()
 }
 
