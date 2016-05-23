@@ -145,7 +145,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 
 	// Vote granted in following cases:
 	// 1. candidate's term is more up-to-date
-	// 2. candidate's term is equal to voter's term "AND" one of the following condition:
+	// 2. candidate's term is equal to voter's term "AND" one of the following condition satisfied:
 	// 		* voter has not voted yet
 	// 		* voter has voted candidate at least once. (since each voter can only vote for one guy in each term)
 	if rf.currentTerm < args.TERM || (rf.currentTerm == args.TERM && (rf.votedFor == -1 || rf.votedFor == args.CANDIDATEID)) {
@@ -198,7 +198,7 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 			}
 			break
 		}
-		time.Sleep(5 * time.Millisecond) // try to be gentle
+		time.Sleep(8 * time.Millisecond) // try to be gentle
 		ok = rf.peers[server].Call("Raft.RequestVote", args, reply)
 	}
 	return ok
@@ -285,7 +285,7 @@ func (rf *Raft) sendAppendEntriesRPC(server int, args AppendEntries, reply *Appe
 				break
 			}
 		}
-		time.Sleep(20 * time.Millisecond) // try to be gentle
+		time.Sleep(8 * time.Millisecond) // try to be gentle
 		ok = rf.peers[server].Call("Raft.AppendEntriesRPC", args, reply)
 	}
 
@@ -310,9 +310,6 @@ func (rf *Raft) BroadcastAppendEntriesRPC() {
 				temp := <-gochan
 				rf.sendAppendEntriesRPC(temp, *args, reply)
 			}()
-			if rf.state != "leader" {
-				break
-			}
 		}
 	}
 }
@@ -357,11 +354,8 @@ func (rf *Raft) Loop() {
 		TimeOutConst = ElectionTimeoutConst()
 		if rf.state == "follower" {
 			// DO FOLLOWER STUFF
-
 			select {
-
 			case <-rf.heartbeatCH:
-
 			case <- time.After(time.Duration(TimeOutConst) * time.Millisecond):
 				rf.state = "candidate"
 			}
@@ -370,7 +364,7 @@ func (rf *Raft) Loop() {
 			rf.CandidateState(TimeOutConst)
 		} else {
 			// DO LEADER STUFF
-			// * send heartbeat
+			// * send heartbeats
 			rf.LeaderState()
 		}
 
@@ -411,7 +405,6 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 			rf.state = "leader"
 			return
 		}
-
 	case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
 		return
 	}
@@ -420,7 +413,7 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 
 func (rf *Raft) LeaderState() {
 	// broadcast heatbeat to all other nodes in the cluster
-	time.Sleep(5*time.Millisecond)
+	time.Sleep(8*time.Millisecond)
 	rf.BroadcastAppendEntriesRPC()
 }
 
