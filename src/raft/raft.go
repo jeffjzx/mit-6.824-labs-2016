@@ -53,7 +53,7 @@ type Raft struct {
 	// state a Raft server must maintain.
 	currentTerm int
 	votedFor    int
-	log         []*Log
+	logs        []Log
 
 	commitIndex int
 	lastApplied int
@@ -62,6 +62,9 @@ type Raft struct {
 
 	nextIndex  []int
 	matchIndex []int
+
+	redirectApplyCh chan ApplyMsg
+	commandCH chan interface{} // used in leader state
 
 	heartbeatCH chan bool
 
@@ -73,7 +76,6 @@ type Raft struct {
 type Log struct {
 	Command interface{}
 	Term    int
-	Index   int
 }
 
 // return currentTerm and whether this server
@@ -149,7 +151,20 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	// 2. candidate's term is equal to voter's term "AND" one of the following condition satisfied:
 	// 		* voter has not voted yet
 	// 		* voter has voted candidate at least once. (since each voter can only vote for one guy in each term)
-	if rf.currentTerm < args.TERM || (rf.currentTerm == args.TERM && (rf.votedFor == -1 || rf.votedFor == args.CANDIDATEID)) {
+	// 3. Prevent a candidate from winning an election unless its log contains all committed entries.
+	//		* the RPC includes information about the candidate's log, and the voter denies its vote if its own log is more
+	//		  up-to-date than that of the candidate.
+
+	// Raft determines which of two logs is more up-to-date by comparing the index and the term of the last entries
+	// in the log. If the logs have last entries with different terms, then the log with the later term is
+	// more up-to-date. If the logs end with the same term, then whichever log is longer is more up-to-date
+
+	rLastLogIdx := len(rf.logs) - 1
+	rLastLogTm := rf.logs[rLastLogIdx].Term
+
+	moreUptoDate := ReqMoreUpToDate(rLastLogIdx, rLastLogTm, args.LASTLOGIDX, args.LASTLOGTERM)
+
+	if moreUptoDate || (rf.currentTerm == args.TERM && (rf.votedFor == -1 || rf.votedFor == args.CANDIDATEID)) {
 		rf.mu.Lock()
 		rf.votedFor = args.CANDIDATEID
 		rf.currentTerm = args.TERM
@@ -160,6 +175,15 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	} else {
 		reply.VOTEGRANTED = false
 		return
+	}
+}
+
+// return true if candidate's log is more up-to-date
+func ReqMoreUpToDate(rLastLogIdx int, rLastLogTm int, cLastLogIdx int, cLastLogTm int) bool {
+	if rLastLogTm == cLastLogTm {
+		return cLastLogIdx >= rLastLogIdx // should be >= or > ???
+	} else {
+		return cLastLogTm > rLastLogTm
 	}
 }
 
@@ -213,8 +237,8 @@ func (rf *Raft) BroadcastRequestVote() {
 
 	args.CANDIDATEID = rf.me
 	args.TERM = rf.currentTerm // current candidate's term.
-	// args.LASTLOGIDX = rf.log[len(rf.log)-1].Index
-	// args.LASTLOGTERM = rf.log[len(rf.log)-1].Term
+	args.LASTLOGIDX = len(rf.log) - 1
+	args.LASTLOGTERM = rf.log[len(rf.log)-1].Term
 	reply.TERM = rf.currentTerm
 
 	gochan := make(chan int, len(rf.peers)-1)
@@ -234,37 +258,71 @@ func (rf *Raft) BroadcastRequestVote() {
 // used by leader of the cluster
 
 type AppendEntries struct {
-	TERM     int
-	LEADERID int
+	TERM         int
+	LEADERID     int
+	COMMITINDEX  int
+	PREVLOGINDEX int
+	PREVLOGTERM  int
+	ENTRIES      []Log
+	LEADERCOMMIT int
 }
 
 type AppendEntriesReply struct {
 	TERM   int
+	NEXTINDEX int  // nextindex to start when AppendEntriesRPC call to a peer
 	ACCEPT bool
 }
 
 func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) {
 
 	// AppendEntriesRPC implementation
-	// check this so-called leader has up-to-date term
-	if args.TERM < rf.currentTerm {
-		reply.TERM = rf.currentTerm
-		reply.ACCEPT = false
-		return
-	}
-	// if the current listener is in "candidate" state, if so, step down to "follower"
-	if rf.state == "candidate" {
-		rf.state = "follower"
-	}
-	// step down if a leader hear from a new leader
-	if rf.state == "leader" && rf.currentTerm < args.TERM {
-		rf.state = "follower"
-	}
-	// hear from heartbeat
 
+	// check if the current listener is in "candidate" state, if so, step down to "follower"
+	// step down if a leader hear from a new leader
+	if rf.state != "follower" && rf.currentTerm < args.TERM {
+		rf.currentTerm = args.TERM
+		rf.state = "follower"
+	}
+
+	// If leaderCommit > commitIndex, set commitIndex=min(leaderCommit, index of the last new )
+	if rf.commitIndex < args.LEADERCOMMIT {
+		rf.commitIndex = args.LEADERCOMMIT 
+		if args.LEADERCOMMIT < len(rf.logs)-1 {
+			rf.commitIndex = args.LEADERCOMMIT
+		} else {
+			rf.commitIndex = len(rf.logs) -1
+		}
+	}
+
+	// upload commits to applyCh
+	if rf.commintIndex < args.LEADERCOMMIT {
+		oldCommit := rf.commintIndex
+		rf.commintIndex = args.LEADERCOMMIT
+		go func() {
+			for i := old; i <= args.LEADERCOMMIT; i++{
+				applyMsg := new(ApplyMsg)
+				applyMsg.Index = i
+				applyMsg.Command = rf.logs[i].Command
+				rf.redirectApplyCh <- *applyMsg
+			}
+		}()
+	}
+
+	// check index and term
+	// if index and term are matched separately, discard data after arg.PREVLOGINDEX and append new entries
+	if rf.logs[args.PREVLOGINDEX].Term == args.TERM { 
+		rf.logs = rf.logs[:args.PREVLOGINDEX+1]
+		for i := 0; i < len(args.ENTRIES); i++ {
+			rf.logs = append(rf.logs, args.ENTRIES[i])
+		} 
+		reply.NEXTINDEX = len(rf.logs) - 1
+		reply.ACCEPT = true
+	} else {
+		reply.ACCEPT = false
+	}
+
+	// hear from heartbeat
 	rf.heartbeatCH <- true
-	rf.currentTerm = args.TERM
-	reply.ACCEPT = true
 	return
 }
 
@@ -272,41 +330,75 @@ func (rf *Raft) sendAppendEntriesRPC(server int, args AppendEntries, reply *Appe
 	// Calling peer node indefinitely until the other side has response (for loop).
 	// As long as the other side has response, check if it has accepted as a leader,
 	// if not, check if leader's term is up-to-date, if not, step down to follower
+
 	ok := rf.peers[server].Call("Raft.AppendEntriesRPC", args, reply)
 	for {
 		if ok {
-			if !reply.ACCEPT && rf.currentTerm < reply.TERM {
-				rf.state = "follower"
-				rf.BecomeLeaderCH <- false
-				break
+			if reply.ACCEPT == true {
+				rf.nextIndex[server] = reply.NEXTINDEX
+			} else {
+				rf.nextIndex[server] = rf.nextIndex[server] - 1
 			}
+
 		}
 		time.Sleep(20 * time.Millisecond) // try to be gentle
 		ok = rf.peers[server].Call("Raft.AppendEntriesRPC", args, reply)
-	}
-
-	// if candidate find its term out of date, revert to "follower" state
-	if reply.TERM > rf.currentTerm {
-		rf.state = "follower"
 	}
 	return ok
 }
 
 // send AppendEntriesRPC to all other nodes in the cluster
 func (rf *Raft) BroadcastAppendEntriesRPC() {
-	args := &AppendEntries{}
-	reply := &AppendEntriesReply{}
-	args.TERM = rf.currentTerm
-	args.LEADERID = rf.me
+	
 	gochan := make(chan int, len(rf.peers)-1)
 	for k := 0; k < len(rf.peers); k++ {
 		if k != rf.me {
+			args := &AppendEntries{}
+			reply := &AppendEntriesReply{}
+			args.TERM = rf.currentTerm
+			args.LEADERID = rf.me
+			args.COMMITINDEX = rf.commitIndex
+			args.PREVLOGINDEX = rf.nextIndex[k] // read nextIndex of peer
+			args.PREVLOGTERM = rf.logs[args.PREVLOGINDEX] // term nextIndex of peer
+			args.ENTRIES = rf.logs[args.PREVLOGINDEX+1:]
 			gochan <- k
 			go func() {
 				temp := <-gochan
 				rf.sendAppendEntriesRPC(temp, *args, reply)
 			}()
 		}
+	}
+}
+
+// leader update commintIndex
+func (rf *Raft) UpdateCommit() {
+
+	oldCommit := r.commitIndex
+	newCommit := r.commitIndex
+	count := 0
+
+	// * count values which are bigger than old commitIndex
+	// * find the smallest value which is bigger than old commitIndex
+	for i := 0; i < len(rf.nextIndex); i++{
+		if rf.nextIndex[i] > rf.commitIndex {
+			count++
+			if newCommit == r.commitIndex || newCommit > rf.nextIndex[i] {
+				newCommit = rf.nextIndex[i]
+			}
+		}
+	}
+
+	if count > len(rf.peers) / 2 {
+		rf.commitIndex = newCommit
+		go func() {
+			// applyCh
+			for i := oldCommit; i <= newCommit; i++ {
+				applyMsg := new(ApplyMsg)
+				applyMsg.Index = i
+				applyMsg.Command = rf.logs[i].Command
+				rf.redirectApplyCh <- *applyMsg
+			}
+		}()
 	}
 }
 
@@ -324,9 +416,18 @@ func (rf *Raft) BroadcastAppendEntriesRPC() {
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+	index := rf.commitIndex
+	term := rf.currentTerm
+
+	if rf.state == "leader" {
+		entry := new(Log)
+		entry.Command = command
+		entry.Term = rf.currentTerm
+		rf.logs = append(rf.logs, *entry) // append new entry from client 
+		isLeader := true
+	} else {
+		isLeader := false
+	}
 
 	return index, term, isLeader
 }
@@ -342,11 +443,15 @@ func (rf *Raft) Kill() {
 }
 
 // Run as a goroutine whenever a node has been initialized.
-func (rf *Raft) Loop() {
+func (rf *Raft) Loop(applyCh chan ApplyMsg) {
 	// Set out as a follower
 
 	TimeOutConst := 0
 	for {
+		select {
+		case applyCh <- rf.redirectApplyCh:
+		default:
+		}
 		TimeOutConst = ElectionTimeoutConst()
 		if rf.state == "follower" {
 			// DO FOLLOWER STUFF
@@ -397,6 +502,13 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 		// change state to leader
 		if becomeLeader {
 			rf.state = "leader"
+			// When a leader first comes to power, it initializes all
+			// nextIndex values to the index just after the last one in its log.
+			go func() {
+				for i := 0; i < len(rf.peers); i++ {
+					rf.nextIndex[i] = len(rf.logs)
+				}
+			}()
 			return
 		}
 	case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
@@ -408,6 +520,7 @@ func (rf *Raft) LeaderState() {
 	// broadcast heatbeat to all other nodes in the cluster
 	time.Sleep(20 * time.Millisecond)
 	rf.BroadcastAppendEntriesRPC()
+	rf.UpdateCommit()
 }
 
 func ElectionTimeoutConst() int {
@@ -435,10 +548,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.state = "follower"
 	rf.BecomeLeaderCH = make(chan bool)
 	rf.heartbeatCH = make(chan bool)
+	rf.commandCH = make(chan interface{}, 10)
 	rf.votedFor = -1
+	firstLog := new(Log) // initialize all nodes' logs
+	rf.logs = []Log{*firstLog}
+	rf.nextIndex = [len(rf.peers)]int{} // initialize all node's nextIndex
 
 	// Your initialization code here.
-	go rf.Loop()
+	go rf.Loop(applyCh)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
