@@ -545,7 +545,7 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 
 func (rf *Raft) LeaderState() {
 	// broadcast heatbeat to all other nodes in the cluster
-	time.Sleep(8 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	go rf.UpdateCommit()
 	go rf.BroadcastAppendEntriesRPC()
 	
