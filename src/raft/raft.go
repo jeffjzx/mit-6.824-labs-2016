@@ -22,7 +22,7 @@ import "labrpc"
 import "time"
 import "math/rand"
 
-// import "strconv"
+import "strconv"
 
 // import "bytes"
 // import "encoding/gob"
@@ -166,11 +166,11 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VOTEGRANTED = false
 		return
 	} else if rf.currentTerm < args.TERM {
+		rf.votedFor = -1
 		rf.currentTerm = args.TERM
 	}
 
 	moreUptoDate := ReqMoreUpToDate(rLastLogIdx, rLastLogTm, args.LASTLOGIDX, args.LASTLOGTERM)
-
 	if moreUptoDate || (rf.votedFor == -1 || rf.votedFor == args.CANDIDATEID) {
 		rf.mu.Lock()
 		rf.votedFor = args.CANDIDATEID
@@ -273,7 +273,6 @@ func (rf *Raft) BroadcastRequestVote() {
 type AppendEntries struct {
 	TERM         int
 	LEADERID     int
-	COMMITINDEX  int
 	PREVLOGINDEX int
 	PREVLOGTERM  int
 	ENTRIES      []Log
@@ -314,8 +313,8 @@ func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) 
 		for i := 0; i < len(args.ENTRIES); i++ {
 			rf.logs = append(rf.logs, args.ENTRIES[i])
 		}
-
 		// If LEADERCOMMIT > commitIndex, set commitIndex = min(LEADERCOMMIT, index of last new entry)
+		
 		if rf.commitIndex < args.LEADERCOMMIT {
 			if args.LEADERCOMMIT < len(rf.logs)-1 {
 				rf.commitIndex = args.LEADERCOMMIT
@@ -371,7 +370,7 @@ func (rf *Raft) BroadcastAppendEntriesRPC() {
 			reply := &AppendEntriesReply{}
 			args.TERM = rf.currentTerm
 			args.LEADERID = rf.me
-			args.COMMITINDEX = rf.commitIndex
+			args.LEADERCOMMIT = rf.commitIndex
 			args.PREVLOGINDEX = rf.nextIndex[k]           // read nextIndex of peer
 			args.PREVLOGTERM = rf.logs[args.PREVLOGINDEX].Term // term nextIndex of peer
 			args.ENTRIES = rf.logs[args.PREVLOGINDEX+1:]
@@ -459,6 +458,7 @@ func (rf *Raft) Loop() {
 			select {
 			case <-rf.heartbeatCH:
 			case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
+				println(strconv.Itoa(rf.me) + " panic, term: " + strconv.Itoa(rf.currentTerm))
 				rf.state = "candidate"
 			}
 		} else if rf.state == "candidate" {
@@ -525,6 +525,7 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 		// change state to leader
 		if becomeLeader {
 			rf.state = "leader"
+			println(strconv.Itoa(rf.me) + " becomes leader")
 			// When a leader first comes to power, it initializes all
 			// nextIndex values to the index just after the last one in its log.
 			go func() {
@@ -579,6 +580,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	firstLog := new(Log) // initialize all nodes' logs
 	rf.logs = []Log{*firstLog}
 	rf.nextIndex = []int{} // initialize all node's nextIndex
+	rf.lastApplied = 1
 
 	// Your initialization code here.
 	go rf.Loop()
