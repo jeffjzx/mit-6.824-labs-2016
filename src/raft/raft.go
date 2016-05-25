@@ -236,7 +236,7 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 			}
 			break
 		}
-		time.Sleep(20 * time.Millisecond) // try to be gentle
+		time.Sleep(8 * time.Millisecond) // try to be gentle
 		ok = rf.peers[server].Call("Raft.RequestVote", args, reply)
 	}
 	return ok
@@ -341,7 +341,6 @@ func (rf *Raft) sendAppendEntriesRPC(server int, args AppendEntries, reply *Appe
 	// Calling peer node indefinitely until the other side has response (for loop).
 	// As long as the other side has response, check if it has accepted as a leader,
 	// if not, check if leader's term is up-to-date, if not, step down to follower
-
 	ok := rf.peers[server].Call("Raft.AppendEntriesRPC", args, reply)
 	for {
 		if ok {
@@ -354,7 +353,7 @@ func (rf *Raft) sendAppendEntriesRPC(server int, args AppendEntries, reply *Appe
 			}
 			break
 		}
-		time.Sleep(20 * time.Millisecond) // try to be gentle
+		time.Sleep(8 * time.Millisecond) // try to be gentle
 		ok = rf.peers[server].Call("Raft.AppendEntriesRPC", args, reply)
 	}
 	return ok
@@ -362,7 +361,6 @@ func (rf *Raft) sendAppendEntriesRPC(server int, args AppendEntries, reply *Appe
 
 // send AppendEntriesRPC to all other nodes in the cluster
 func (rf *Raft) BroadcastAppendEntriesRPC() {
-
 	gochan := make(chan int, len(rf.peers)-1)
 	for k := 0; k < len(rf.peers); k++ {
 		if k != rf.me {
@@ -386,6 +384,7 @@ func (rf *Raft) BroadcastAppendEntriesRPC() {
 // leader update commitIndex
 func (rf *Raft) UpdateCommit() {
 
+	rf.mu.Lock()
 	newCommit := rf.commitIndex
 	count := 0
 
@@ -403,6 +402,7 @@ func (rf *Raft) UpdateCommit() {
 	if count > len(rf.peers)/2 {
 		rf.commitIndex = newCommit
 	}
+	rf.mu.Unlock()
 }
 
 //
@@ -475,12 +475,12 @@ func (rf *Raft) Loop() {
 // feed newly committed commands into state machine
 func (rf *Raft) FeedStateMachine(applyCh chan ApplyMsg) {
 	for {
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(8 * time.Millisecond)
 		if rf.lastApplied < rf.commitIndex {
 			go func() {
 				oldApplied := rf.lastApplied
 				commitIdx := rf.commitIndex
-				for i := oldApplied; i < commitIdx; i++ {
+				for i := oldApplied+1; i <= commitIdx; i++ {
 					Msg := new(ApplyMsg)
 					Msg.Index = i
 					Msg.Command = rf.logs[i].Command
@@ -545,9 +545,10 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 
 func (rf *Raft) LeaderState() {
 	// broadcast heatbeat to all other nodes in the cluster
-	time.Sleep(20 * time.Millisecond)
-	rf.BroadcastAppendEntriesRPC()
-	rf.UpdateCommit()
+	time.Sleep(8 * time.Millisecond)
+	go rf.UpdateCommit()
+	go rf.BroadcastAppendEntriesRPC()
+	
 }
 
 func ElectionTimeoutConst() int {
@@ -580,7 +581,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	firstLog := new(Log) // initialize all nodes' logs
 	rf.logs = []Log{*firstLog}
 	rf.nextIndex = []int{} // initialize all node's nextIndex
-	rf.lastApplied = 1
 
 	// Your initialization code here.
 	go rf.Loop()
