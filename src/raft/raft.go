@@ -375,7 +375,10 @@ func (rf *Raft) BroadcastAppendEntriesRPC() {
 			gochan <- k
 			go func() {
 				temp := <-gochan
-				rf.sendAppendEntriesRPC(temp, *args, reply)
+				if rf.state == "leader"{
+					rf.sendAppendEntriesRPC(temp, *args, reply)
+				}
+	
 			}()
 		}
 	}
@@ -423,11 +426,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	term := rf.currentTerm
 	var isLeader bool
 	if rf.state == "leader" {
+		println(strconv.Itoa(rf.me) + " HEAR NEW COMMAND!!!!!!!!HEAR NEW COMMAND!!!!!!!!HEAR NEW COMMAND!!!!!!!!")
 		entry := new(Log)
 		entry.Command = command
 		entry.Term = rf.currentTerm
 		rf.logs = append(rf.logs, *entry) // append new entry from client
 		index = len(rf.logs) - 1
+		rf.nextIndex[rf.me] = index
 		isLeader = true
 	} else {
 		isLeader = false
