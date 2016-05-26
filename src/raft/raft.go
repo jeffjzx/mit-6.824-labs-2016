@@ -512,7 +512,7 @@ func (rf *Raft) FeedStateMachine(applyCh chan ApplyMsg) {
 func (rf *Raft) CandidateState(TimeOutConst int) {
 
 	// increment current term
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 	rf.currentTerm = rf.currentTerm + 1
 	// voteFor itself
 	rf.votedFor = rf.me
@@ -554,6 +554,7 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 		}
 	case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
 		println("split~~~~~~~~~~~~~~~")
+		rf.state = "follower"
 		return
 	}
 }
