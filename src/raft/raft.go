@@ -365,7 +365,7 @@ func (rf *Raft) sendAppendEntriesRPC(server int, args AppendEntries, reply *Appe
 		if reply.ACCEPT == false && reply.TERM > rf.currentTerm {
 			rf.mu.Lock()
 			rf.currentTerm = reply.TERM
-			println(strconv.Itoa(rf.me) + " step down as follower, with commitIndex: " + strconv.Itoa(rf.commitIndex) + " last commit term: " + strconv.Itoa(rf.logs[rf.commitIndex].Term))
+			println(strconv.Itoa(rf.me) + " step down as follower, with commitIndex: " + strconv.Itoa(rf.commitIndex))
 			rf.state = "follower"
 			rf.mu.Unlock()
 		}
@@ -496,7 +496,7 @@ func (rf *Raft) Loop() {
 // feed newly committed commands into state machine
 func (rf *Raft) FeedStateMachine(applyCh chan ApplyMsg) {
 	for {
-		time.Sleep(13 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
 		if rf.lastApplied < rf.commitIndex {
 			go func() {
 				rf.mu.Lock()
@@ -521,7 +521,7 @@ func (rf *Raft) FeedStateMachine(applyCh chan ApplyMsg) {
 func (rf *Raft) CandidateState(TimeOutConst int) {
 
 	// increment current term
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	
 	// Empty BecomeLeaderCH before proceeding
 	select {
@@ -587,7 +587,7 @@ func (rf *Raft) LeaderState() {
 }
 
 func ElectionTimeoutConst() int {
-	res := rand.Intn(400) + 800
+	res := rand.Intn(300) + 800
 	return res
 }
 
