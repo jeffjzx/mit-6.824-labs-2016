@@ -180,7 +180,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 
 	moreUptoDate := ReqMoreUpToDate(rLastLogIdx, rLastLogTm, args.LASTLOGIDX, args.LASTLOGTERM)
 	if moreUptoDate {
-		println("rf.me: " + strconv.Itoa(rf.me) + " Term: " + strconv.Itoa(rf.currentTerm) + "  ooooooooooo  rf.votedFor: " + strconv.Itoa(args.CANDIDATEID) + " args.Term: " + strconv.Itoa(args.TERM))
+		// println("rf.me: " + strconv.Itoa(rf.me) + " Term: " + strconv.Itoa(rf.currentTerm) + "  ooooooooooo  rf.votedFor: " + strconv.Itoa(args.CANDIDATEID) + " args.Term: " + strconv.Itoa(args.TERM))
 		rf.mu.Lock()
 		rf.votedFor = args.CANDIDATEID
 		rf.state = "follower"
@@ -198,10 +198,8 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 // return true if candidate's log is more up-to-date
 func ReqMoreUpToDate(rLastLogIdx int, rLastLogTm int, cLastLogIdx int, cLastLogTm int) bool {
 	if rLastLogTm == cLastLogTm {
-		// println("jjjjjjjjjjjjjj rLastLogTm: " + strconv.Itoa(rLastLogTm) + " cLastLogTm: " + strconv.Itoa(cLastLogTm))
 		return cLastLogIdx >= rLastLogIdx
 	} else {
-		// println("kkkkkkkkkkkkkk rLastLogTm: " + strconv.Itoa(rLastLogTm) + " cLastLogTm: " + strconv.Itoa(cLastLogTm))
 		return cLastLogTm >= rLastLogTm
 	}
 }
@@ -258,8 +256,8 @@ func (rf *Raft) BroadcastRequestVote() {
 
 	args.CANDIDATEID = rf.me
 	args.TERM = rf.currentTerm // current candidate's term.
-	args.LASTLOGIDX = rf.commitIndex
-	args.LASTLOGTERM = rf.logs[rf.commitIndex].Term
+	args.LASTLOGIDX = len(rf.logs) - 1
+	args.LASTLOGTERM = rf.logs[args.LASTLOGIDX].Term
 	reply.TERM = rf.currentTerm
 
 	gochan := make(chan int, len(rf.peers)-1)
@@ -370,7 +368,7 @@ func (rf *Raft) sendAppendEntriesRPC(server int, args AppendEntries, reply *Appe
 		if reply.ACCEPT == false && reply.TERM > rf.currentTerm {
 			rf.mu.Lock()
 			rf.currentTerm = reply.TERM
-			println("************* rf.me: " + strconv.Itoa(rf.me) + " step down as follower, with commitIndex: " + strconv.Itoa(rf.commitIndex) + " last commit term: " + strconv.Itoa(rf.logs[rf.commitIndex].Term))
+			println(strconv.Itoa(rf.me) + " step down as follower, with commitIndex: " + strconv.Itoa(rf.commitIndex) + " last commit term: " + strconv.Itoa(rf.logs[rf.commitIndex].Term))
 			rf.state = "follower"
 			rf.mu.Unlock()
 		}
@@ -559,7 +557,7 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 			return
 		}
 	case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
-		println("split~~~~~~~~~~~~~~~")
+		println(strconv.Itoa(rf.me) + " become leader fail...")
 		rf.state = "follower"
 		return
 	}
@@ -567,7 +565,7 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 
 func (rf *Raft) LeaderState() {
 	// broadcast heatbeat to all other nodes in the cluster
-	time.Sleep(32 * time.Millisecond)
+	time.Sleep(33 * time.Millisecond)
 	rf.UpdateCommit()
 	go rf.BroadcastAppendEntriesRPC()
 	
