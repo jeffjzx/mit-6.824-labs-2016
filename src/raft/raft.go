@@ -166,7 +166,8 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VOTEGRANTED = false
 		return
 	} else if rf.currentTerm == args.TERM {
-		if rf.votedFor != -1 && rf.votedFor != args.CANDIDATEID {
+		if rf.votedFor != -1 && rf.votedFor != args.CANDIDATEID || rf.state != "follower" {
+			println("meet disagreement.....")
 			reply.TERM = rf.currentTerm
 			reply.VOTEGRANTED = false
 			return
@@ -180,7 +181,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 
 	moreUptoDate := ReqMoreUpToDate(rLastLogIdx, rLastLogTm, args.LASTLOGIDX, args.LASTLOGTERM)
 	if moreUptoDate {
-		// println("rf.me: " + strconv.Itoa(rf.me) + " Term: " + strconv.Itoa(rf.currentTerm) + "  ooooooooooo  rf.votedFor: " + strconv.Itoa(args.CANDIDATEID) + " args.Term: " + strconv.Itoa(args.TERM))
+		println("rf.me: " + strconv.Itoa(rf.me) + " Term: " + strconv.Itoa(rf.currentTerm) + "  ooooooooooo  rf.votedFor: " + strconv.Itoa(args.CANDIDATEID) + " args.Term: " + strconv.Itoa(args.TERM))
 		rf.mu.Lock()
 		rf.votedFor = args.CANDIDATEID
 		rf.state = "follower"
@@ -389,7 +390,11 @@ func (rf *Raft) BroadcastAppendEntriesRPC() {
 			args.TERM = rf.currentTerm
 			args.LEADERID = rf.me
 			args.LEADERCOMMIT = rf.commitIndex
-			args.PREVLOGINDEX = rf.nextIndex[k]           // read nextIndex of peer
+			if len(rf.nextIndex) != len(rf.peers) {
+				args.PREVLOGINDEX = len(rf.peers) - 1
+			} else {
+				args.PREVLOGINDEX = rf.nextIndex[k]
+			}
 			args.PREVLOGTERM = rf.logs[args.PREVLOGINDEX].Term // term nextIndex of peer
 			args.ENTRIES = rf.logs[args.PREVLOGINDEX+1:]
 			rf.sendAppendEntriesRPC(k, *args, reply)
@@ -565,8 +570,11 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 
 func (rf *Raft) LeaderState() {
 	// broadcast heatbeat to all other nodes in the cluster
-	time.Sleep(33 * time.Millisecond)
+	time.Sleep(17 * time.Millisecond)
 	rf.UpdateCommit()
+	if rf.lastApplied == rf.commitIndex {
+		time.Sleep(17 * time.Millisecond)
+	}
 	go rf.BroadcastAppendEntriesRPC()
 	
 }
