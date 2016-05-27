@@ -306,7 +306,7 @@ func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) 
 			rf.state = "follower"
 			rf.heartbeatCH <- true // hear from heartbeat
 		} else if rf.commitIndex < args.LEADERCOMMIT {
-			// println("*********************** rf.me: " + strconv.Itoa(rf.me) + " commitIndex: " + strconv.Itoa(rf.commitIndex))
+			rf.heartbeatCH <- true // hear from heartbeat
 			rf.state = "follower"
 			rf.currentTerm = args.TERM
 			reply.TERM = rf.currentTerm
@@ -502,17 +502,17 @@ func (rf *Raft) FeedStateMachine(applyCh chan ApplyMsg) {
 		time.Sleep(13 * time.Millisecond)
 		if rf.lastApplied < rf.commitIndex {
 			go func() {
+				rf.mu.Lock()
 				oldApplied := rf.lastApplied
 				commitIdx := rf.commitIndex
+				rf.lastApplied = commitIdx
+				rf.mu.Unlock()
 				for i := oldApplied+1; i <= commitIdx; i++ {
 					Msg := new(ApplyMsg)
 					Msg.Index = i
 					Msg.Command = rf.logs[i].Command
 					applyCh <- *Msg
 				}
-				rf.mu.Lock()
-				rf.lastApplied = commitIdx
-				rf.mu.Unlock()
 			}()
 		}
 	}
@@ -570,10 +570,10 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 
 func (rf *Raft) LeaderState() {
 	// broadcast heatbeat to all other nodes in the cluster
-	time.Sleep(17 * time.Millisecond)
+	time.Sleep(15 * time.Millisecond)
 	rf.UpdateCommit()
 	if rf.lastApplied == rf.commitIndex {
-		time.Sleep(17 * time.Millisecond)
+		time.Sleep(19 * time.Millisecond)
 	}
 	go rf.BroadcastAppendEntriesRPC()
 	
