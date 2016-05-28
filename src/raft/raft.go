@@ -129,7 +129,7 @@ func (rf *Raft) readPersist(data []byte) {
 		firstLog := new(Log) // initialize all nodes' Logs
 		rf.Logs = []Log{*firstLog}
 	}
-	println("rf.me " + strconv.Itoa(rf.me) + " : In readPersist, len(rf.logs): " + strconv.Itoa(len(rf.Logs)) + " Term: " + strconv.Itoa(rf.CurrentTerm))
+	// println("rf.me " + strconv.Itoa(rf.me) + " : In readPersist, len(rf.logs): " + strconv.Itoa(len(rf.Logs)) + " Term: " + strconv.Itoa(rf.CurrentTerm) + " CommitIndex: " + strconv.Itoa(rf.CommitIndex))
 }
 
 //
@@ -188,7 +188,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	} 
 
 	if rf.CurrentTerm == args.TERM && rf.VotedFor != -1 && rf.VotedFor != args.CANDIDATEID{
-		println("meet disagreement.....")
+		// println("meet disagreement.....")
 		reply.TERM = rf.CurrentTerm
 		reply.VOTEGRANTED = false
 		return
@@ -256,7 +256,7 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 		if reply.VOTEGRANTED {
 			rf.mu.Lock()
 			rf.voteCount = rf.voteCount + 1
-			println("rf.me: " + strconv.Itoa(rf.me) + " voteFrom: " + strconv.Itoa(server) + " voteCount: " + strconv.Itoa(rf.voteCount))
+			// println("rf.me: " + strconv.Itoa(rf.me) + " voteFrom: " + strconv.Itoa(server) + " voteCount: " + strconv.Itoa(rf.voteCount))
 			rf.mu.Unlock()
 			if rf.state == "candidate" && rf.voteCount > len(rf.peers)/2 {
 				rf.BecomeLeaderCH <- true
@@ -266,7 +266,7 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 			rf.CurrentTerm = reply.TERM
 			rf.state = "follower"
 			rf.mu.Unlock()
-			println(strconv.Itoa(server) + " reject " + strconv.Itoa(rf.me) + " and " + strconv.Itoa(rf.me) + " step down as follower")
+			// println(strconv.Itoa(server) + " reject " + strconv.Itoa(rf.me) + " and " + strconv.Itoa(rf.me) + " step down as follower")
 		}
 	} 
 	return ok
@@ -346,9 +346,9 @@ func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) 
 		for i := 0; i < len(args.ENTRIES); i++ {
 			rf.Logs = append(rf.Logs, args.ENTRIES[i])
 		}
-		if len(args.ENTRIES) > 0{
-			// println(strconv.Itoa(rf.me) + " APPEND NEW LOGS (len: " + strconv.Itoa(len(args.ENTRIES)) + ") from leader " + strconv.Itoa(args.LEADERID) + " now len(rf.Logs): " + strconv.Itoa(len(rf.Logs)))
-		}
+		// if len(args.ENTRIES) > 0{
+		// 	println(strconv.Itoa(rf.me) + " APPEND NEW LOGS (len: " + strconv.Itoa(len(args.ENTRIES)) + ") from leader " + strconv.Itoa(args.LEADERID) + " now len(rf.Logs): " + strconv.Itoa(len(rf.Logs)))
+		// }
 		// If LEADERCOMMIT > CommitIndex, set CommitIndex = min(LEADERCOMMIT, index of last new entry)
 		
 		if rf.CommitIndex < args.LEADERCOMMIT {
@@ -435,9 +435,10 @@ func (rf *Raft) UpdateCommit() {
 
 	if count > len(rf.peers)/2 && rf.state == "leader"{
 		rf.CommitIndex = newCommit
-		println("leader " + strconv.Itoa(rf.me) + " , new CommitIndex: " + strconv.Itoa(rf.CommitIndex) + " LastApplied: " + strconv.Itoa(rf.LastApplied) + " len(rf.Logs): " + strconv.Itoa(len(rf.Logs)))
+		// println("leader " + strconv.Itoa(rf.me) + " , new CommitIndex: " + strconv.Itoa(rf.CommitIndex) + " LastApplied: " + strconv.Itoa(rf.LastApplied) + " len(rf.Logs): " + strconv.Itoa(len(rf.Logs)))
 	}
 	rf.mu.Unlock()
+	go rf.persist()
 }
 
 //
@@ -519,7 +520,7 @@ func (rf *Raft) Loop() {
 			case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
 				if rf.state != "leader" {
 					rf.mu.Lock()
-					println(strconv.Itoa(rf.me) + " panic, term: " + strconv.Itoa(rf.CurrentTerm) + " len(rf.Logs): " + strconv.Itoa(len(rf.Logs)) + " voteCount: " + strconv.Itoa(rf.voteCount))
+					// println(strconv.Itoa(rf.me) + " panic, term: " + strconv.Itoa(rf.CurrentTerm) + " len(rf.Logs): " + strconv.Itoa(len(rf.Logs)) + " voteCount: " + strconv.Itoa(rf.voteCount))
 					rf.state = "candidate"
 					rf.mu.Unlock()
 				}
@@ -600,7 +601,7 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 		// change state to leader
 		if becomeLeader {
 			rf.state = "leader"
-			println(strconv.Itoa(rf.me) + " becomes leader" + " CommitIndex: " + strconv.Itoa(rf.CommitIndex) + " LastApplied: " + strconv.Itoa(rf.LastApplied) + " loglength: " + strconv.Itoa(len(rf.Logs)) + " Term: " + strconv.Itoa(rf.CurrentTerm))
+			// println(strconv.Itoa(rf.me) + " becomes leader" + " CommitIndex: " + strconv.Itoa(rf.CommitIndex) + " LastApplied: " + strconv.Itoa(rf.LastApplied) + " loglength: " + strconv.Itoa(len(rf.Logs)) + " Term: " + strconv.Itoa(rf.CurrentTerm))
 			// When a leader first comes to power, it initializes all
 			// NextIndex values to the index just after the last one in its log.
 			rf.mu.Lock()
@@ -614,7 +615,7 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 			return
 		}
 	case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
-		println(strconv.Itoa(rf.me) + " become leader fail...")
+		// println(strconv.Itoa(rf.me) + " become leader fail...")
 		if rf.state != "leader" {
 			rf.state = "follower"
 		}
