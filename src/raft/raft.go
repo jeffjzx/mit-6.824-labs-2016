@@ -312,7 +312,7 @@ func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) 
 	// println("rf.Term: " + strconv.Itoa(rf.currentTerm) + " args.TERM: " + strconv.Itoa(args.TERM))
 
 	rf.heartbeatCH <- true // hear from heartbeat
-	if rf.currentTerm > args.TERM {
+	if rf.currentTerm > args.TERM && rf.commitIndex >= args.LEADERCOMMIT {
 		reply.TERM = rf.currentTerm
 		reply.ACCEPT = false
 		reply.NEXTINDEX = len(rf.logs) - 1
@@ -419,7 +419,7 @@ func (rf *Raft) UpdateCommit() {
 
 	if count > len(rf.peers)/2 && rf.state == "leader"{
 		rf.commitIndex = newCommit
-		println("leader " + strconv.Itoa(rf.me) + " , new commitIndex: " + strconv.Itoa(rf.commitIndex) + " lastApplied: " + strconv.Itoa(rf.lastApplied))
+		println("leader " + strconv.Itoa(rf.me) + " , new commitIndex: " + strconv.Itoa(rf.commitIndex) + " lastApplied: " + strconv.Itoa(rf.lastApplied) + " len(rf.logs): " + strconv.Itoa(len(rf.logs)))
 	}
 	rf.mu.Unlock()
 }
@@ -499,10 +499,10 @@ func (rf *Raft) Loop() {
 // feed newly committed commands into state machine
 func (rf *Raft) FeedStateMachine(applyCh chan ApplyMsg) {
 	for {
-		time.Sleep(10 * time.Millisecond)
 		if rf.state == "leader" {
 			rf.UpdateCommit()
 		}
+		time.Sleep(25 * time.Millisecond)
 		if rf.lastApplied < rf.commitIndex {
 			go func() {
 				rf.mu.Lock()
@@ -513,6 +513,7 @@ func (rf *Raft) FeedStateMachine(applyCh chan ApplyMsg) {
 				if len(rf.logs)-1 < commitIdx {
 					return
 				}
+				time.Sleep(10 * time.Millisecond)
 				for i := oldApplied+1; i <= commitIdx; i++ {
 					Msg := new(ApplyMsg)
 					Msg.Index = i
@@ -561,7 +562,7 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 		// change state to leader
 		if becomeLeader {
 			rf.state = "leader"
-			println(strconv.Itoa(rf.me) + " becomes leader" + " commitIndex: " + strconv.Itoa(rf.commitIndex) + " lastApplied: " + strconv.Itoa(rf.lastApplied))
+			println(strconv.Itoa(rf.me) + " becomes leader" + " commitIndex: " + strconv.Itoa(rf.commitIndex) + " lastApplied: " + strconv.Itoa(rf.lastApplied) + " loglength: " + strconv.Itoa(len(rf.logs)))
 			// When a leader first comes to power, it initializes all
 			// nextIndex values to the index just after the last one in its log.
 			rf.mu.Lock()
@@ -585,7 +586,7 @@ func (rf *Raft) LeaderState() {
 	// broadcast heatbeat to all other nodes in the cluster
 	time.Sleep(10 * time.Millisecond)
 	if rf.lastApplied == rf.commitIndex {
-		time.Sleep(23 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond)
 	}
 	go rf.BroadcastAppendEntriesRPC()
 	
