@@ -162,7 +162,11 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	rLastLogTm := rf.logs[rLastLogIdx].Term
 
 	if rf.currentTerm > args.TERM {
-		reply.TERM = rf.currentTerm
+		if rf.state == "leader" {
+			reply.TERM = args.TERM
+		} else {
+			reply.TERM = rf.currentTerm
+		}
 		reply.VOTEGRANTED = false
 		return
 	} 
@@ -195,6 +199,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		rf.mu.Lock()
 		rf.votedFor = args.CANDIDATEID
 		rf.state = "follower"
+		rf.currentTerm = args.TERM
 		rf.mu.Unlock()
 		reply.TERM = rf.currentTerm
 		reply.VOTEGRANTED = true
@@ -305,6 +310,8 @@ func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) 
 	// AppendEntriesRPC implementation
 	// Update currentTerm before any further works
 	// println("rf.Term: " + strconv.Itoa(rf.currentTerm) + " args.TERM: " + strconv.Itoa(args.TERM))
+
+	rf.heartbeatCH <- true // hear from heartbeat
 	if rf.currentTerm > args.TERM {
 		reply.TERM = rf.currentTerm
 		reply.ACCEPT = false
@@ -314,11 +321,10 @@ func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) 
 	if rf.currentTerm < args.TERM {
 		rf.currentTerm = args.TERM
 	}
-	if rf.state != "follower" {
+	if rf.state == "candidate" {
 		rf.state = "follower"
 	}
-
-	rf.heartbeatCH <- true // hear from heartbeat
+	
 	reply.TERM = rf.currentTerm
 	// check index and term
 	if len(rf.logs) > args.PREVLOGINDEX && rf.logs[args.PREVLOGINDEX].Term == args.PREVLOGTERM {
@@ -386,11 +392,7 @@ func (rf *Raft) BroadcastAppendEntriesRPC() {
 			args.TERM = rf.currentTerm
 			args.LEADERID = rf.me
 			args.LEADERCOMMIT = rf.commitIndex
-			if len(rf.nextIndex) != len(rf.peers) {
-				args.PREVLOGINDEX = len(rf.logs) - 1
-			} else {
-				args.PREVLOGINDEX = rf.nextIndex[k]
-			}
+			args.PREVLOGINDEX = rf.nextIndex[k]
 			args.PREVLOGTERM = rf.logs[args.PREVLOGINDEX].Term // term nextIndex of peer
 			args.ENTRIES = rf.logs[args.PREVLOGINDEX+1:]
 			rf.sendAppendEntriesRPC(k, *args, reply)
@@ -417,6 +419,7 @@ func (rf *Raft) UpdateCommit() {
 
 	if count > len(rf.peers)/2 && rf.state == "leader"{
 		rf.commitIndex = newCommit
+		println("leader " + strconv.Itoa(rf.me) + " , new commitIndex: " + strconv.Itoa(rf.commitIndex) + " lastApplied: " + strconv.Itoa(rf.lastApplied))
 	}
 	rf.mu.Unlock()
 }
@@ -496,7 +499,10 @@ func (rf *Raft) Loop() {
 // feed newly committed commands into state machine
 func (rf *Raft) FeedStateMachine(applyCh chan ApplyMsg) {
 	for {
-		time.Sleep(30 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
+		if rf.state == "leader" {
+			rf.UpdateCommit()
+		}
 		if rf.lastApplied < rf.commitIndex {
 			go func() {
 				rf.mu.Lock()
@@ -555,17 +561,17 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 		// change state to leader
 		if becomeLeader {
 			rf.state = "leader"
-			println(strconv.Itoa(rf.me) + " becomes leader" + " commitIndex: " + strconv.Itoa(rf.commitIndex))
+			println(strconv.Itoa(rf.me) + " becomes leader" + " commitIndex: " + strconv.Itoa(rf.commitIndex) + " lastApplied: " + strconv.Itoa(rf.lastApplied))
 			// When a leader first comes to power, it initializes all
 			// nextIndex values to the index just after the last one in its log.
-			go func() {
-				rf.mu.Lock()
-				rf.nextIndex = []int{}
-				for i := 0; i < len(rf.peers); i++ {
-					rf.nextIndex = append(rf.nextIndex, len(rf.logs)-1)
-				}
-				rf.mu.Unlock()
-			}()
+			rf.mu.Lock()
+			rf.nextIndex = []int{}
+			for i := 0; i < len(rf.peers); i++ {
+				rf.nextIndex = append(rf.nextIndex, len(rf.logs)-1)
+			}
+			rf.mu.Unlock()
+
+			go rf.BroadcastAppendEntriesRPC()
 			return
 		}
 	case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
@@ -577,10 +583,9 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 
 func (rf *Raft) LeaderState() {
 	// broadcast heatbeat to all other nodes in the cluster
-	time.Sleep(13 * time.Millisecond)
-	rf.UpdateCommit()
+	time.Sleep(10 * time.Millisecond)
 	if rf.lastApplied == rf.commitIndex {
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(23 * time.Millisecond)
 	}
 	go rf.BroadcastAppendEntriesRPC()
 	
