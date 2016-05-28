@@ -24,8 +24,8 @@ import "math/rand"
 
 import "strconv"
 
-// import "bytes"
-// import "encoding/gob"
+import "bytes"
+import "encoding/gob"
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -51,16 +51,16 @@ type Raft struct {
 	// Your data here.
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	currentTerm int
-	votedFor    int
-	logs        []Log
+	CurrentTerm int
+	VotedFor    int
+	Logs        []Log
 
-	commitIndex int
-	lastApplied int
+	CommitIndex int
+	LastApplied int
 
 	state string
 
-	nextIndex  []int
+	NextIndex  []int
 	matchIndex []int
 
 	commandCH chan interface{} // used in leader state
@@ -77,7 +77,7 @@ type Log struct {
 	Term    int
 }
 
-// return currentTerm and whether this server
+// return CurrentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
@@ -88,7 +88,7 @@ func (rf *Raft) GetState() (int, bool) {
 	} else {
 		isleader = false
 	}
-	return rf.currentTerm, isleader
+	return rf.CurrentTerm, isleader
 }
 
 //
@@ -99,12 +99,15 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	// Your code here.
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := gob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := gob.NewEncoder(w)
+	e.Encode(rf.CurrentTerm)
+	e.Encode(rf.Logs)
+	e.Encode(rf.CommitIndex)
+	e.Encode(rf.LastApplied)
+	e.Encode(rf.NextIndex)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -113,10 +116,20 @@ func (rf *Raft) persist() {
 func (rf *Raft) readPersist(data []byte) {
 	// Your code here.
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := gob.NewDecoder(r)
-	// d.Decode(&rf.xxx)
-	// d.Decode(&rf.yyy)
+	r := bytes.NewBuffer(data)
+	d := gob.NewDecoder(r)
+	d.Decode(&rf.CurrentTerm)
+	d.Decode(&rf.Logs)
+	d.Decode(&rf.CommitIndex)
+	d.Decode(&rf.LastApplied)
+	d.Decode(&rf.NextIndex)
+	rf.state = "follower"
+	rf.VotedFor = -1
+	if len(rf.Logs) == 0 {
+		firstLog := new(Log) // initialize all nodes' Logs
+		rf.Logs = []Log{*firstLog}
+	}
+	println("rf.me " + strconv.Itoa(rf.me) + " : In readPersist, len(rf.logs): " + strconv.Itoa(len(rf.Logs)) + " Term: " + strconv.Itoa(rf.CurrentTerm))
 }
 
 //
@@ -154,58 +167,54 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	//		* the RPC includes information about the candidate's log, and the voter denies its vote if its own log is more
 	//		  up-to-date than that of the candidate.
 
-	// Raft determines which of two logs is more up-to-date by comparing the index and the term of the last entries
-	// in the log. If the logs have last entries with different terms, then the log with the later term is
-	// more up-to-date. If the logs end with the same term, then whichever log is longer is more up-to-date
+	// Raft determines which of two Logs is more up-to-date by comparing the index and the term of the last entries
+	// in the log. If the Logs have last entries with different terms, then the log with the later term is
+	// more up-to-date. If the Logs end with the same term, then whichever log is longer is more up-to-date
 
-	rLastLogIdx := len(rf.logs) - 1
-	rLastLogTm := rf.logs[rLastLogIdx].Term
+	rLastLogIdx := len(rf.Logs) - 1
+	rLastLogTm := rf.Logs[rLastLogIdx].Term
 
-	if rf.currentTerm > args.TERM {
-		if rf.state == "leader" {
-			reply.TERM = args.TERM
-		} else {
-			reply.TERM = rf.currentTerm
-		}
+	if rf.state == "leader" && len(rf.Logs) - 1 >= args.LASTLOGIDX {
+		reply.TERM = rf.CurrentTerm
+		reply.VOTEGRANTED = false
+		return
+	}
+
+	if rf.CurrentTerm > args.TERM && len(rf.Logs) - 1 >= args.LASTLOGIDX {
+		// println(strconv.Itoa(rf.me) + " REJECT " +  strconv.Itoa(args.CANDIDATEID))
+		reply.TERM = rf.CurrentTerm
 		reply.VOTEGRANTED = false
 		return
 	} 
 
-	if rf.currentTerm == args.TERM {
-		if rf.votedFor != -1 && rf.votedFor != args.CANDIDATEID || rf.state == "leader" {
-			println("meet disagreement.....")
-			reply.TERM = rf.currentTerm
-			reply.VOTEGRANTED = false
-			return
-		}
+	if rf.CurrentTerm == args.TERM && rf.VotedFor != -1 && rf.VotedFor != args.CANDIDATEID{
+		println("meet disagreement.....")
+		reply.TERM = rf.CurrentTerm
+		reply.VOTEGRANTED = false
+		return
 	}
 
-	if rf.currentTerm < args.TERM {
+	if rf.CurrentTerm < args.TERM {
 		rf.mu.Lock()
 		rf.state = "follower"
-		rf.currentTerm = args.TERM
+		rf.CurrentTerm = args.TERM
 		rf.mu.Unlock()
-		if rf.state == "leader" {
-			rf.currentTerm = args.TERM
-			reply.TERM = rf.currentTerm
-			reply.VOTEGRANTED = false
-			return
-		}
 	} 
 
 	moreUptoDate := ReqMoreUpToDate(rLastLogIdx, rLastLogTm, args.LASTLOGIDX, args.LASTLOGTERM)
 	if moreUptoDate {
-		println("rf.me: " + strconv.Itoa(rf.me) + " Term: " + strconv.Itoa(rf.currentTerm) + "  ooooooooooo  rf.votedFor: " + strconv.Itoa(args.CANDIDATEID) + " args.Term: " + strconv.Itoa(args.TERM))
+		// println("rf.me: " + strconv.Itoa(rf.me) + " Term: " + strconv.Itoa(rf.CurrentTerm) + "  ooooooooooo  rf.VotedFor: " + strconv.Itoa(args.CANDIDATEID) + " args.Term: " + strconv.Itoa(args.TERM))
 		rf.mu.Lock()
-		rf.votedFor = args.CANDIDATEID
+		rf.VotedFor = args.CANDIDATEID
 		rf.state = "follower"
-		rf.currentTerm = args.TERM
+		rf.CurrentTerm = args.TERM
 		rf.mu.Unlock()
-		reply.TERM = rf.currentTerm
+		reply.TERM = rf.CurrentTerm
 		reply.VOTEGRANTED = true
 		return
 	} else {
-		reply.TERM = rf.currentTerm
+		// println(strconv.Itoa(args.CANDIDATEID) + " is not more UP-TO-DATE and REJECT by " + strconv.Itoa(rf.me))
+		reply.TERM = rf.CurrentTerm
 		reply.VOTEGRANTED = false
 		return
 	}
@@ -216,7 +225,7 @@ func ReqMoreUpToDate(rLastLogIdx int, rLastLogTm int, cLastLogIdx int, cLastLogT
 	if rLastLogTm == cLastLogTm {
 		return cLastLogIdx >= rLastLogIdx
 	} else {
-		return cLastLogTm >= rLastLogTm
+		return cLastLogTm > rLastLogTm
 	}
 }
 
@@ -252,13 +261,14 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 			if rf.state == "candidate" && rf.voteCount > len(rf.peers)/2 {
 				rf.BecomeLeaderCH <- true
 			}
-		} else if reply.TERM > rf.currentTerm {
+		} else if reply.TERM > rf.CurrentTerm {
 			rf.mu.Lock()
-			rf.currentTerm = reply.TERM
+			rf.CurrentTerm = reply.TERM
 			rf.state = "follower"
 			rf.mu.Unlock()
+			println(strconv.Itoa(server) + " reject " + strconv.Itoa(rf.me) + " and " + strconv.Itoa(rf.me) + " step down as follower")
 		}
-	}
+	} 
 	return ok
 }
 
@@ -266,13 +276,12 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 func (rf *Raft) BroadcastRequestVote() {
 
 	args := &RequestVoteArgs{}
-	reply := &RequestVoteReply{}
+	
 
 	args.CANDIDATEID = rf.me
-	args.TERM = rf.currentTerm // current candidate's term.
-	args.LASTLOGIDX = len(rf.logs) - 1
-	args.LASTLOGTERM = rf.logs[args.LASTLOGIDX].Term
-	reply.TERM = rf.currentTerm
+	args.TERM = rf.CurrentTerm // current candidate's term.
+	args.LASTLOGIDX = len(rf.Logs) - 1
+	args.LASTLOGTERM = rf.Logs[args.LASTLOGIDX].Term
 
 	gochan := make(chan int, len(rf.peers)-1)
 
@@ -281,6 +290,8 @@ func (rf *Raft) BroadcastRequestVote() {
 		if k != rf.me && rf.state == "candidate" { // exclude self
 			gochan <- k
 			go func() {
+				reply := &RequestVoteReply{}
+				reply.TERM = rf.CurrentTerm
 				temp := <-gochan
 				rf.sendRequestVote(temp, *args, reply)
 			}()
@@ -308,49 +319,53 @@ type AppendEntriesReply struct {
 func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) {
 
 	// AppendEntriesRPC implementation
-	// Update currentTerm before any further works
-	// println("rf.Term: " + strconv.Itoa(rf.currentTerm) + " args.TERM: " + strconv.Itoa(args.TERM))
+	// Update CurrentTerm before any further works
 
 	rf.heartbeatCH <- true // hear from heartbeat
-	if rf.currentTerm > args.TERM && rf.commitIndex >= args.LEADERCOMMIT {
-		reply.TERM = rf.currentTerm
+	if rf.CurrentTerm > args.TERM && rf.CommitIndex >= args.LEADERCOMMIT {
+		reply.TERM = rf.CurrentTerm
 		reply.ACCEPT = false
-		reply.NEXTINDEX = len(rf.logs) - 1
+		reply.NEXTINDEX = len(rf.Logs) - 1
 		return
 	}
-	if rf.currentTerm < args.TERM {
-		rf.currentTerm = args.TERM
+	if rf.CurrentTerm < args.TERM {
+		rf.CurrentTerm = args.TERM
 	}
 	if rf.state == "candidate" {
 		rf.state = "follower"
 	}
 	
-	reply.TERM = rf.currentTerm
+	reply.TERM = rf.CurrentTerm
 	// check index and term
-	if len(rf.logs) > args.PREVLOGINDEX && rf.logs[args.PREVLOGINDEX].Term == args.PREVLOGTERM {
+	if len(rf.Logs) > args.PREVLOGINDEX && rf.Logs[args.PREVLOGINDEX].Term == args.PREVLOGTERM {
 		rf.mu.Lock()
 		// * If an existing entry conflicts with a new one (same index but different terms),
 		// delete the existing entry and all that follow it
 		// * Append any new entries not already in the log
-		rf.logs = rf.logs[:args.PREVLOGINDEX+1] // include value at index: args.PREVLOGINDEX
+		rf.Logs = rf.Logs[:args.PREVLOGINDEX+1] // include value at index: args.PREVLOGINDEX
 		for i := 0; i < len(args.ENTRIES); i++ {
-			rf.logs = append(rf.logs, args.ENTRIES[i])
+			rf.Logs = append(rf.Logs, args.ENTRIES[i])
 		}
-		// If LEADERCOMMIT > commitIndex, set commitIndex = min(LEADERCOMMIT, index of last new entry)
+		if len(args.ENTRIES) > 0{
+			// println(strconv.Itoa(rf.me) + " APPEND NEW LOGS (len: " + strconv.Itoa(len(args.ENTRIES)) + ") from leader " + strconv.Itoa(args.LEADERID) + " now len(rf.Logs): " + strconv.Itoa(len(rf.Logs)))
+		}
+		// If LEADERCOMMIT > CommitIndex, set CommitIndex = min(LEADERCOMMIT, index of last new entry)
 		
-		if rf.commitIndex < args.LEADERCOMMIT {
-			if args.LEADERCOMMIT < len(rf.logs)-1 {
-				rf.commitIndex = args.LEADERCOMMIT
+		if rf.CommitIndex < args.LEADERCOMMIT {
+			if args.LEADERCOMMIT < len(rf.Logs)-1 {
+				rf.CommitIndex = args.LEADERCOMMIT
 			} else {
-				rf.commitIndex = len(rf.logs) - 1
+				rf.CommitIndex = len(rf.Logs) - 1
 			}
 		}
 
 		rf.mu.Unlock()
-		reply.NEXTINDEX = len(rf.logs) - 1
+		go rf.persist()
+		reply.NEXTINDEX = len(rf.Logs) - 1
 		reply.ACCEPT = true
 	} else {
 		// Reply false if log doesn't contain an entry at PREVLOGINDEX whose term matches PREVLOGTERM
+		// println(strconv.Itoa(rf.me) + " append from " + strconv.Itoa(args.LEADERID) + "    FAILED!!!!!!!!!!!!!" + " len(rf.Logs): " + strconv.Itoa(len(rf.Logs)) + " args.PREVLOGINDEX: " + strconv.Itoa(args.PREVLOGINDEX))
 		reply.NEXTINDEX = args.PREVLOGINDEX - 1
 		reply.ACCEPT = false
 	}
@@ -365,18 +380,19 @@ func (rf *Raft) sendAppendEntriesRPC(server int, args AppendEntries, reply *Appe
 	ok := rf.peers[server].Call("Raft.AppendEntriesRPC", args, reply)
 	if ok {
 		rf.mu.Lock()
-		rf.nextIndex[server] = reply.NEXTINDEX
+		rf.NextIndex[server] = reply.NEXTINDEX
 		rf.mu.Unlock()
-
-		if reply.ACCEPT == false && reply.TERM > rf.currentTerm {
+		// println(" SEND TO " + strconv.Itoa(server) + " SUCCESS!!!!!! leader: " + strconv.Itoa(rf.me))
+		if reply.ACCEPT == false && reply.TERM > rf.CurrentTerm {
 			rf.mu.Lock()
-			rf.currentTerm = reply.TERM
-			println(strconv.Itoa(rf.me) + " step down as follower, with commitIndex: " + strconv.Itoa(rf.commitIndex))
+			rf.CurrentTerm = reply.TERM
+			println(strconv.Itoa(rf.me) + " step down as follower, with CommitIndex: " + strconv.Itoa(rf.CommitIndex))
 			rf.state = "follower"
 			rf.mu.Unlock()
 		}
 	} else {
-		rf.nextIndex[server] = 0
+		// println(" SEND TO " + strconv.Itoa(server) + " FAILED leader: " + strconv.Itoa(rf.me))
+		rf.NextIndex[server] = 0
 	}
 	return ok
 }
@@ -386,40 +402,40 @@ func (rf *Raft) BroadcastAppendEntriesRPC() {
 	// gochan := make(chan int, len(rf.peers)-1)
 	for k := 0; k < len(rf.peers); k++ {
 		if k != rf.me && rf.state == "leader"{
-			// println("BroadcastAppendEntriesRPC server: " + strconv.Itoa(k) + " args.PREVLOGINDEX: " + strconv.Itoa(rf.nextIndex[k]) + " commitIndex: " + strconv.Itoa(rf.commitIndex))
 			args := &AppendEntries{}
 			reply := &AppendEntriesReply{}
-			args.TERM = rf.currentTerm
+			args.TERM = rf.CurrentTerm
 			args.LEADERID = rf.me
-			args.LEADERCOMMIT = rf.commitIndex
-			args.PREVLOGINDEX = rf.nextIndex[k]
-			args.PREVLOGTERM = rf.logs[args.PREVLOGINDEX].Term // term nextIndex of peer
-			args.ENTRIES = rf.logs[args.PREVLOGINDEX+1:]
+			args.LEADERCOMMIT = rf.CommitIndex
+			args.PREVLOGINDEX = rf.NextIndex[k]
+			args.PREVLOGTERM = rf.Logs[args.PREVLOGINDEX].Term // term NextIndex of peer
+			args.ENTRIES = rf.Logs[args.PREVLOGINDEX+1:]
 			rf.sendAppendEntriesRPC(k, *args, reply)
 		}
 	}
+	go rf.persist()
 }
 
-// leader update commitIndex
+// leader update CommitIndex
 func (rf *Raft) UpdateCommit() {
 
 	rf.mu.Lock()
-	newCommit := rf.commitIndex
+	newCommit := rf.CommitIndex
 	count := 0
-	// * count values which are bigger than old commitIndex
-	// * find the smallest value which is bigger than old commitIndex
-	for i := 0; i < len(rf.nextIndex); i++ {
-		if rf.nextIndex[i] > rf.commitIndex {
+	// * count values which are bigger than old CommitIndex
+	// * find the smallest value which is bigger than old CommitIndex
+	for i := 0; i < len(rf.NextIndex); i++ {
+		if rf.NextIndex[i] > rf.CommitIndex {
 			count++
-			if newCommit == rf.commitIndex || newCommit > rf.nextIndex[i] {
-				newCommit = rf.nextIndex[i]
+			if newCommit == rf.CommitIndex || newCommit > rf.NextIndex[i] {
+				newCommit = rf.NextIndex[i]
 			}
 		}
 	}
 
 	if count > len(rf.peers)/2 && rf.state == "leader"{
-		rf.commitIndex = newCommit
-		println("leader " + strconv.Itoa(rf.me) + " , new commitIndex: " + strconv.Itoa(rf.commitIndex) + " lastApplied: " + strconv.Itoa(rf.lastApplied) + " len(rf.logs): " + strconv.Itoa(len(rf.logs)))
+		rf.CommitIndex = newCommit
+		println("leader " + strconv.Itoa(rf.me) + " , new CommitIndex: " + strconv.Itoa(rf.CommitIndex) + " LastApplied: " + strconv.Itoa(rf.LastApplied) + " len(rf.Logs): " + strconv.Itoa(len(rf.Logs)))
 	}
 	rf.mu.Unlock()
 }
@@ -438,19 +454,39 @@ func (rf *Raft) UpdateCommit() {
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := rf.commitIndex
-	term := rf.currentTerm
+	index := rf.CommitIndex
+	term := rf.CurrentTerm
 	var isLeader bool
 	if rf.state == "leader" {
-		// println(strconv.Itoa(rf.me) + " HEAR NEW COMMAND!!!!!!!!HEAR NEW COMMAND!!!!!!!!HEAR NEW COMMAND!!!!!!!!")
 		entry := new(Log)
 		entry.Command = command
-		entry.Term = rf.currentTerm
+		entry.Term = rf.CurrentTerm
 		rf.mu.Lock()
-		rf.logs = append(rf.logs, *entry) // append new entry from client
-		index = len(rf.logs) - 1
-		rf.nextIndex[rf.me] = index
+		rf.Logs = append(rf.Logs, *entry) // append new entry from client
+		index = len(rf.Logs) - 1
+		rf.NextIndex[rf.me] = index
 		rf.mu.Unlock()
+		// send to peers ASAP
+		gochan := make(chan int, len(rf.peers)-1)
+		
+		for k := 0; k < len(rf.peers); k++ {
+			if k != rf.me && rf.state == "leader" {
+				gochan <- k
+				go func() {
+					temp := <-gochan
+					args := &AppendEntries{}
+					args.TERM = rf.CurrentTerm
+					args.LEADERID = rf.me
+					args.LEADERCOMMIT = rf.CommitIndex
+					reply := &AppendEntriesReply{}
+					args.PREVLOGINDEX = rf.NextIndex[temp]
+					args.PREVLOGTERM = rf.Logs[args.PREVLOGINDEX].Term // term NextIndex of peer
+					args.ENTRIES = rf.Logs[args.PREVLOGINDEX+1:]
+					rf.sendAppendEntriesRPC(temp, *args, reply)
+				}()
+			}
+		}
+		// println(strconv.Itoa(rf.me) + " HEAR NEW COMMAND!!!!!!!!HEAR NEW COMMAND!!!!!!!!HEAR NEW COMMAND!!!!!!!! now len(rf.Logs): " + strconv.Itoa(len(rf.Logs)))
 		isLeader = true
 	} else {
 		isLeader = false
@@ -482,8 +518,10 @@ func (rf *Raft) Loop() {
 			case <-rf.heartbeatCH:
 			case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
 				if rf.state != "leader" {
-					println(strconv.Itoa(rf.me) + " panic, term: " + strconv.Itoa(rf.currentTerm))
+					rf.mu.Lock()
+					println(strconv.Itoa(rf.me) + " panic, term: " + strconv.Itoa(rf.CurrentTerm) + " len(rf.Logs): " + strconv.Itoa(len(rf.Logs)) + " voteCount: " + strconv.Itoa(rf.voteCount))
 					rf.state = "candidate"
+					rf.mu.Unlock()
 				}
 			}
 		} else if rf.state == "candidate" {
@@ -502,22 +540,22 @@ func (rf *Raft) FeedStateMachine(applyCh chan ApplyMsg) {
 		if rf.state == "leader" {
 			rf.UpdateCommit()
 		}
-		time.Sleep(25 * time.Millisecond)
-		if rf.lastApplied < rf.commitIndex {
+		time.Sleep(30 * time.Millisecond)
+		if rf.LastApplied < rf.CommitIndex {
 			go func() {
 				rf.mu.Lock()
-				oldApplied := rf.lastApplied
-				commitIdx := rf.commitIndex
-				rf.lastApplied = commitIdx
+				oldApplied := rf.LastApplied
+				commitIdx := rf.CommitIndex
+				rf.LastApplied = commitIdx
 				rf.mu.Unlock()
-				if len(rf.logs)-1 < commitIdx {
+				if len(rf.Logs)-1 < commitIdx {
 					return
 				}
 				time.Sleep(10 * time.Millisecond)
 				for i := oldApplied+1; i <= commitIdx; i++ {
 					Msg := new(ApplyMsg)
 					Msg.Index = i
-					Msg.Command = rf.logs[i].Command
+					Msg.Command = rf.Logs[i].Command
 					applyCh <- *Msg
 				}
 			}()
@@ -528,7 +566,7 @@ func (rf *Raft) FeedStateMachine(applyCh chan ApplyMsg) {
 func (rf *Raft) CandidateState(TimeOutConst int) {
 
 	// increment current term
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 	
 	// Empty BecomeLeaderCH before proceeding
 	select {
@@ -540,9 +578,9 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 	default:
 	}
 	rf.mu.Lock()
-	rf.currentTerm = rf.currentTerm + 1
+	rf.CurrentTerm = rf.CurrentTerm + 1
 	// voteFor itself
-	rf.votedFor = rf.me
+	rf.VotedFor = rf.me
 	rf.voteCount = 1
 	rf.mu.Unlock()
 	// send RequestVoteRPC to all other servers, retry until:
@@ -562,13 +600,13 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 		// change state to leader
 		if becomeLeader {
 			rf.state = "leader"
-			println(strconv.Itoa(rf.me) + " becomes leader" + " commitIndex: " + strconv.Itoa(rf.commitIndex) + " lastApplied: " + strconv.Itoa(rf.lastApplied) + " loglength: " + strconv.Itoa(len(rf.logs)))
+			println(strconv.Itoa(rf.me) + " becomes leader" + " CommitIndex: " + strconv.Itoa(rf.CommitIndex) + " LastApplied: " + strconv.Itoa(rf.LastApplied) + " loglength: " + strconv.Itoa(len(rf.Logs)) + " Term: " + strconv.Itoa(rf.CurrentTerm))
 			// When a leader first comes to power, it initializes all
-			// nextIndex values to the index just after the last one in its log.
+			// NextIndex values to the index just after the last one in its log.
 			rf.mu.Lock()
-			rf.nextIndex = []int{}
+			rf.NextIndex = []int{}
 			for i := 0; i < len(rf.peers); i++ {
-				rf.nextIndex = append(rf.nextIndex, len(rf.logs)-1)
+				rf.NextIndex = append(rf.NextIndex, len(rf.Logs)-1)
 			}
 			rf.mu.Unlock()
 
@@ -577,7 +615,9 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 		}
 	case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
 		println(strconv.Itoa(rf.me) + " become leader fail...")
-		rf.state = "follower"
+		if rf.state != "leader" {
+			rf.state = "follower"
+		}
 		return
 	}
 }
@@ -585,7 +625,7 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 func (rf *Raft) LeaderState() {
 	// broadcast heatbeat to all other nodes in the cluster
 	time.Sleep(10 * time.Millisecond)
-	if rf.lastApplied == rf.commitIndex {
+	if rf.LastApplied == rf.CommitIndex {
 		time.Sleep(25 * time.Millisecond)
 	}
 	go rf.BroadcastAppendEntriesRPC()
@@ -614,21 +654,20 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-	rf.state = "follower"
+	// rf.state = "follower"
 	rf.BecomeLeaderCH = make(chan bool)
 	rf.heartbeatCH = make(chan bool)
 	rf.commandCH = make(chan interface{}, 10)
-	rf.votedFor = -1
-	firstLog := new(Log) // initialize all nodes' logs
-	rf.logs = []Log{*firstLog}
-	rf.nextIndex = []int{} // initialize all node's nextIndex
+	// rf.VotedFor = -1
+	// rf.NextIndex = []int{} // initialize all node's NextIndex
 
 	// Your initialization code here.
-	go rf.Loop()
-	go rf.FeedStateMachine(applyCh)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+
+	go rf.Loop()
+	go rf.FeedStateMachine(applyCh)
 
 	return rf
 }
