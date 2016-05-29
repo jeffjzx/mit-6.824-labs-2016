@@ -366,7 +366,12 @@ func (rf *Raft) AppendEntriesRPC(args AppendEntries, reply *AppendEntriesReply) 
 	} else {
 		// Reply false if log doesn't contain an entry at PREVLOGINDEX whose term matches PREVLOGTERM
 		// println(strconv.Itoa(rf.me) + " append from " + strconv.Itoa(args.LEADERID) + "    FAILED!!!!!!!!!!!!!" + " len(rf.Logs): " + strconv.Itoa(len(rf.Logs)) + " args.PREVLOGINDEX: " + strconv.Itoa(args.PREVLOGINDEX))
-		reply.NEXTINDEX = args.PREVLOGINDEX - 1
+		if args.PREVLOGINDEX - 1 <= rf.CommitIndex {
+			reply.NEXTINDEX = args.PREVLOGINDEX - 1
+		} else {
+			reply.NEXTINDEX = rf.CommitIndex
+		}
+		
 		reply.ACCEPT = false
 	}
 
