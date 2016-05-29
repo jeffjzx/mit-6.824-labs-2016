@@ -532,7 +532,7 @@ func (rf *Raft) Loop() {
 			}
 		} else if rf.state == "candidate" {
 			// DO CANDIDIATE STUFF
-			rf.CandidateState(TimeOutConst)
+			rf.CandidateState()
 		} else {
 			// DO LEADER STUFF
 			rf.LeaderState()
@@ -569,10 +569,10 @@ func (rf *Raft) FeedStateMachine(applyCh chan ApplyMsg) {
 	}
 }
 
-func (rf *Raft) CandidateState(TimeOutConst int) {
+func (rf *Raft) CandidateState() {
 
 	// increment current term
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(17 * time.Millisecond)
 	
 	// Empty BecomeLeaderCH before proceeding
 	select {
@@ -619,7 +619,7 @@ func (rf *Raft) CandidateState(TimeOutConst int) {
 			go rf.BroadcastAppendEntriesRPC()
 			return
 		}
-	case <-time.After(time.Duration(TimeOutConst) * time.Millisecond):
+	case <-time.After(666 * time.Millisecond):
 		// println(strconv.Itoa(rf.me) + " become leader fail...")
 		if rf.state != "leader" {
 			rf.state = "follower"
